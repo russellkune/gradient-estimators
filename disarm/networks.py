@@ -470,20 +470,70 @@ class DiscreteVAE(tf.keras.Model):
       u_noise = _sample_uniform_variables(
           sample_shape=tf.shape(encoder_logits),
           nfold=1)
-      sigma_abs_phi = tf.math.sigmoid(tf.math.abs(encoder_logits))
+
       b1 = tf.cast(u_noise < sigma_phi, tf.float32)
+      hidden_dim = encoder_logits.shape[1]
 
-      
-      list_of_tensors = []
+      # list_of_tensors = []
+      base_elbo = self.get_elbo(input_tensor, b1)
+      # print("Base elbo", base_elbo.shape)
+      # for j in range(hidden_dim):
+      #   mask = np.array([i != j for i in range(hidden_dim)])
+      #   b1_flipped = (b1 * mask) +  (1.0 - b1) * (1.0 - mask)
+      #   flipped_elbo = self.get_elbo(input_tensor, b1_flipped)
+      #   out_one = (base_elbo - flipped_elbo) * ((-1 * tf.ones(base_elbo.shape[0])) ** b1_flipped[:, j])
+      #   if j == 0:
+      #     print("orig flipped elbo")
+      #     print(flipped_elbo[:5])
+      #     print(out_one[:5])
+      #   list_of_tensors.append(out_one)
 
-      for j in range(encoder_logits.shape[1]):
-        mask = np.array([i != j for i in range(encoder_logits.shape[1])])
-        b1temp = b1 * mask
-        b2temp = (b1 * mask) + tf.ones_like(b1) * (1.0 -mask)
-        list_of_tensors.append(self.get_elbo(input_tensor, b2temp) - self.get_elbo(input_tensor, b1temp))
-      layer_grad = tf.transpose(tf.stack(list_of_tensors))*sigma_phi*(1.0 - sigma_phi)
+      # elbo_diff_orig = tf.transpose(tf.stack(list_of_tensors))
+      # layer_grad = tf.transpose(tf.stack(list_of_tensors))*sigma_phi*(1.0 - sigma_phi)
+      # print("layer grad", layer_grad.shape)
 
-      #layer_grad =  
+
+      stacked_b1_flipped = []
+      for j in range(hidden_dim):
+        mask = np.array([i != j for i in range(hidden_dim)])
+        b1_flipped = (b1 * mask) +  (1.0 - b1) * (1.0 - mask)
+        stacked_b1_flipped.append(b1_flipped)
+
+      stacked_b1_flipped = tf.reshape(tf.stack(stacked_b1_flipped), [-1, hidden_dim])
+      # print("stacked b1", stacked_b1_flipped.shape)
+      input_tensor_stacked = tf.tile(input_tensor, [hidden_dim, 1])
+      # print("input_tensor stacked", input_tensor_stacked.shape)
+
+      flipped_elbo_stacked = self.get_elbo(input_tensor_stacked, stacked_b1_flipped)
+      # print("flipped elbo stacked", flipped_elbo_stacked.shape)
+      flipped_elbo_t = tf.reshape(flipped_elbo_stacked, [hidden_dim, -1])
+      # print("flipped elbo_t", flipped_elbo_t.shape)
+      # print(flipped_elbo_t[0, :5])
+      elbo_diff = tf.transpose(flipped_elbo_t - base_elbo)
+      # print("elbo_diff", elbo_diff.shape)
+      # print(elbo_diff[:5, 0])
+      elbo_diff = elbo_diff * ((-1 * tf.ones_like(elbo_diff)) ** b1)
+      layer_grad = elbo_diff * sigma_phi * (1.0 - sigma_phi)
+      # print("layer_grad2", layer_grad2.shape)
+      # tf.debugging.assert_near(
+      #     layer_grad, layer_grad2, rtol=0.001, atol=0.001, message=None, summarize=None, name=None
+      # )
+
+
+
+
+
+
+
+        
+
+
+      # layer_grad2 = tf.transpose(tf.stack(list_of_tensors2))*sigma_phi*(1.0 - sigma_phi)
+      # print("layer grad2 shape", layer_grad2.shape)
+
+      # print(layer_grad[:2])
+      # print(layer_grad2[:5])
+      # exit(1)
     elif grad_type == 'bitflip-biased':
       u_noise = _sample_uniform_variables(
           sample_shape=tf.shape(encoder_logits),
