@@ -25,21 +25,23 @@ from absl import logging
 import tensorflow as tf
 import tensorflow_probability as tfp
 
-from disarm import dataset
-from disarm import networks
-
+#from disarm import dataset
+#from disarm import networks
+import dataset
+import networks 
 tfd = tfp.distributions
 
 layers = tf.keras.layers
-
+K  = 30
+print("Latent Size K:", K)
 
 flags.DEFINE_enum('dataset', 'dynamic_mnist',
                   ['static_mnist', 'dynamic_mnist',
                    'fashion_mnist', 'omniglot'],
                   'Dataset to use.')
-flags.DEFINE_float('genmo_lr', 1e-4,
+flags.DEFINE_float('genmo_lr', 1e-3, #changed from 1e-4
                    'Learning rate for decoder, Generation network.')
-flags.DEFINE_float('infnet_lr', 1e-4,
+flags.DEFINE_float('infnet_lr', 1e-3, #changed from 1e-4
                    'Learning rate for encoder, Inference network.')
 flags.DEFINE_float('prior_lr', 1e-2,
                    'Learning rate for prior variables.')
@@ -52,7 +54,7 @@ flags.DEFINE_integer('num_pairs', 1,
 flags.DEFINE_integer('num_steps', int(1e6), 'Number of training steps.')
 flags.DEFINE_enum('grad_type', 'disarm',
                   ['arm', 'disarm', 'reinforce_loo', 'relax',
-                   'vimco', 'local-disarm','is-disarm', 'bitflip','is-disarm-alt','ind-disarm','bitflip-biased'],
+                   'vimco', 'local-disarm','bitflip-1', 'bitflip','tUGC','ind-disarm','bitflip-biased'],
                   'Choice of gradient estimator.')
 flags.DEFINE_string('encoder_type', 'linear',
                     'Choice supported: linear, nonlinear')
@@ -71,7 +73,7 @@ flags.DEFINE_bool('demean_input', False,
 flags.DEFINE_bool('initialize_with_bias', False,
                   'Initialize the final layer bias of decoder '
                   'with dataset mean.')
-flags.DEFINE_integer('seed', 1, 'Global random seed.')
+flags.DEFINE_integer('seed', 123, 'Global random seed.')
 flags.DEFINE_bool('symmetrized', False,
                   'Symmetrize the training objective for b and b_tilde.')
 flags.DEFINE_bool('estimate_grad_basket', False,
@@ -372,17 +374,17 @@ def main(_):
     bias_initializer = 'zeros'
 
   if FLAGS.encoder_type == 'linear':
-    encoder_hidden_sizes = [200]
+    encoder_hidden_sizes = [K]
     encoder_activations = ['linear']
     decoder_hidden_sizes = [784]
     decoder_activations = ['linear']
   elif FLAGS.encoder_type == 'nonlinear':
-    encoder_hidden_sizes = [200, 200, 200]
+    encoder_hidden_sizes = [200, 200, K]
     encoder_activations = [
         layers.LeakyReLU(alpha=0.3),
         layers.LeakyReLU(alpha=0.3),
         'linear']
-    decoder_hidden_sizes = [200, 200, 784]
+    decoder_hidden_sizes = [K, 200, 784]
     decoder_activations = [
         layers.LeakyReLU(alpha=0.3),
         layers.LeakyReLU(alpha=0.3),
@@ -403,7 +405,7 @@ def main(_):
       final_layer_bias_initializer=bias_initializer,
       name='bvae_decoder')]
 
-  prior_logit = tf.Variable(tf.zeros([200], tf.float32))
+  prior_logit = tf.Variable(-3.0*tf.ones([K], tf.float32))
 
   if FLAGS.grad_type == 'relax':
     control_network = tf.keras.Sequential()

@@ -150,13 +150,13 @@ class BinaryNetwork(tf.keras.Model):
       self.networks.add(
           keras.layers.Dense(
               units=hidden_sizes[i],
-              activation=activations[i]))
+              activation=activations[i], kernel_initializer = keras.initializers.RandomNormal(mean=0.0, stddev=0.3, seed=None)))
 
     self.networks.add(
         keras.layers.Dense(
             units=hidden_sizes[-1],
             activation=activations[-1],
-            bias_initializer=final_layer_bias_initializer))
+            bias_initializer=final_layer_bias_initializer, kernel_initializer = keras.initializers.RandomNormal(mean=0.0, stddev=0.3, seed=None)))
 
   def __call__(self,
                input_tensor,
@@ -355,7 +355,8 @@ class DiscreteVAE(tf.keras.Model):
     encoder_logits = self.encoder.get_logits(input_tensor)
     sigma_phi = tf.math.sigmoid(encoder_logits)
 
-    print("SHAPE:", tf.shape(encoder_logits))
+    #tf.print("SHAPE:", tf.shape(encoder_logits))
+    #tf.print(sigma_phi)
     if grad_type == 'ar':
       # Augment-REINFORCE estimator.
       u_noise = _sample_uniform_variables(
@@ -418,7 +419,84 @@ class DiscreteVAE(tf.keras.Model):
       disarm_factor = ((1. - b1) * (b2) + b1 * (1. - b2)) * (-1.)**b2
       layer_grad = 0.5*(f1 - f2) * disarm_factor
       
+    elif grad_type == 'bitflip-1':
+      u_noise = _sample_uniform_variables(
+          sample_shape=tf.shape(encoder_logits),
+          nfold=1)
+
+      b1 = tf.cast(u_noise < sigma_phi, tf.float32)
+      hidden_dim = encoder_logits.shape[1]
+      b1_0 = tf.identity(b1)
     
+      q = np.random.choice(list(range(encoder_logits.shape[1])),size = encoder_logits.shape[0])
+      indices = np.vstack((range(encoder_logits.shape[0]), q)).T
+      updates_ones = np.ones(indices.shape[0])
+      updates_zeros = np.zeros(indices.shape[0])
+        
+      b1 = tf.tensor_scatter_nd_update(b1, indices, updates_ones)
+      b1_0 = tf.tensor_scatter_nd_update(b1_0, indices, updates_zeros)
+      base_elbo = self.get_elbo(input_tensor, b1) - self.get_elbo(input_tensor, b1_0)
+      layer_grad = tf.zeros(tf.shape(encoder_logits))
+      # indices = np.vstack((range(encoder_logits.shape[0]), q)).T
+      print(tf.shape(base_elbo))
+      print(tf.shape(sigma_phi))
+      updates = hidden_dim*base_elbo * tf.gather_nd(sigma_phi, indices) * tf.gather_nd((1.0 - sigma_phi), indices)
+      layer_grad = tf.tensor_scatter_nd_update(layer_grad, indices, updates)
+
+    elif grad_type == 'tUGC':
+      hidden_dim = encoder_logits.shape[1]
+      theta_tilde = tf.math.minimum(sigma_phi, 1- sigma_phi)
+      vec = tf.constant(list(range(1, hidden_dim +1)), dtype = float, shape = (1,hidden_dim))
+      vec = 1/(2*vec)
+      sorted_thetas = tf.sort(theta_tilde, axis=1, direction='ASCENDING', name=None)
+      sorted_args = tf.argsort(theta_tilde, axis=1, direction='ASCENDING', name=None)
+      T = tf.reduce_sum(tf.cast(sorted_thetas < vec, tf.float32), axis = 1)
+      u_noise_categorical =  _sample_uniform_variables(sample_shape=[tf.constant(encoder_logits.shape[0])], nfold=1)
+      q = tf.math.floor(T*u_noise_categorical)
+
+      #compute DisARM
+
+      u_noise = _sample_uniform_variables(
+        sample_shape=tf.shape(encoder_logits),
+        nfold=1)
+      sigma_abs_phi = tf.math.sigmoid(tf.math.abs(encoder_logits))
+      b1 = tf.cast(u_noise > 1. - sigma_phi, tf.float32)
+      b2 = tf.cast(u_noise < sigma_phi, tf.float32)
+      f1 = self.get_elbo(input_tensor,b1)[:, tf.newaxis]
+      f2 = self.get_elbo(input_tensor,b2)[:, tf.newaxis]
+      # the factor is I(b1+b2=1) * (-1)**b2 * sigma(|phi|)
+      disarm_factor = ((1. - b1) * (b2) + b1 * (1. - b2)) * (-1.)**b2
+      disarm_factor *= sigma_abs_phi
+
+      layer_grad =  0.5 * (f1 - f2) * disarm_factor
+
+      for i in range(len(T)):
+        args_0_0 = tf.gather_nd(sorted_args,tf.cast(tf.stack((i*tf.ones_like(tf.range(T[i])),tf.range(T[i])), axis = 1), tf.int32))
+        idx_0_0 = tf.cast(tf.stack((i*tf.ones_like(args_0_0),args_0_0), axis = 1), tf.int32)
+        layer_grad = tf.tensor_scatter_nd_update(layer_grad, idx_0_0, tf.zeros(tf.shape(idx_0_0)[:-1], dtype = tf.float32))
+
+      #bitflip code
+      q = tf.stack((tf.range(len(q)),tf.cast(q, dtype = tf.int32)), axis = 1)
+      indices = tf.gather_nd(sorted_args, q)
+      indices = tf.stack((tf.range(len(indices)),indices), axis = 1)
+      updates_ones = np.ones(indices.shape[0])
+      updates_zeros = np.zeros(indices.shape[0])
+      u_noise = _sample_uniform_variables(
+                sample_shape=tf.shape(encoder_logits),
+                nfold=1)
+
+      b1 = tf.cast(u_noise < sigma_phi, tf.float32)
+      hidden_dim = encoder_logits.shape[1]
+      b1_0 = tf.identity(b1)
+
+      b1 = tf.tensor_scatter_nd_update(b1, indices, updates_ones)
+      b1_0 = tf.tensor_scatter_nd_update(b1_0, indices, updates_zeros)
+      base_elbo = self.get_elbo(input_tensor,b1) - self.get_elbo(input_tensor,b1_0)
+      # indices = np.vstack((range(encoder_logits.shape[0]), q)).T
+
+      updates = T*base_elbo * tf.gather_nd(sigma_phi, indices) * tf.gather_nd((1.0 - sigma_phi), indices)
+      layer_grad = tf.tensor_scatter_nd_update(layer_grad, indices, updates)
+
     elif grad_type == 'is-disarm':
       epsilon = .0001
       u_noise1 = _sample_uniform_variables(sample_shape=tf.shape(encoder_logits),nfold=1)
