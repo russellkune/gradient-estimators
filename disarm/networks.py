@@ -442,6 +442,48 @@ class DiscreteVAE(tf.keras.Model):
       print(tf.shape(sigma_phi))
       updates = hidden_dim*base_elbo * tf.gather_nd(sigma_phi, indices) * tf.gather_nd((1.0 - sigma_phi), indices)
       layer_grad = tf.tensor_scatter_nd_update(layer_grad, indices, updates)
+    elif grad_type == 'UGC':
+      #bitflip exactly
+      u_noise = _sample_uniform_variables(
+          sample_shape=tf.shape(encoder_logits),
+          nfold=1)
+
+      b1 = tf.cast(u_noise < sigma_phi, tf.float32)
+      hidden_dim = encoder_logits.shape[1]
+      b1_0 = tf.identity(b1)
+    
+      q = np.random.choice(list(range(encoder_logits.shape[1])),size = encoder_logits.shape[0])
+      indices = np.vstack((range(encoder_logits.shape[0]), q)).T
+      updates_ones = np.ones(indices.shape[0])
+      updates_zeros = np.zeros(indices.shape[0])
+        
+      b1 = tf.tensor_scatter_nd_update(b1, indices, updates_ones)
+      b1_0 = tf.tensor_scatter_nd_update(b1_0, indices, updates_zeros)
+      base_elbo = self.get_elbo(input_tensor, b1) - self.get_elbo(input_tensor, b1_0)
+      layer_grad = tf.zeros(tf.shape(encoder_logits))
+      # indices = np.vstack((range(encoder_logits.shape[0]), q)).T
+      print(tf.shape(base_elbo))
+      print(tf.shape(sigma_phi))
+      updates = hidden_dim*base_elbo * tf.gather_nd(sigma_phi, indices) * tf.gather_nd((1.0 - sigma_phi), indices)
+      layer_grad = tf.tensor_scatter_nd_update(layer_grad, indices, updates)
+
+      # disarm exactly
+      u_noise = _sample_uniform_variables(
+          sample_shape=tf.shape(encoder_logits),
+          nfold=1)
+      sigma_abs_phi = tf.math.sigmoid(tf.math.abs(encoder_logits))
+      b1 = tf.cast(u_noise > 1. - sigma_phi, tf.float32)
+      b2 = tf.cast(u_noise < sigma_phi, tf.float32)
+      f1 = self.get_elbo(input_tensor, b1)[:, tf.newaxis]
+      f2 = self.get_elbo(input_tensor, b2)[:, tf.newaxis]
+      # the factor is I(b1+b2=1) * (-1)**b2 * sigma(|phi|)
+      disarm_factor = ((1. - b1) * (b2) + b1 * (1. - b2)) * (-1.)**b2
+      disarm_factor *= sigma_abs_phi
+      layer_grad_ = 0.5 * (f1 - f2) * disarm_factor
+
+      theta_tilde = tf.math.minimum(sigma_phi, 1- sigma_phi)
+      layer_grad = tf.where(theta_tilde < (1/(2*hidden_dim)), layer_grad, layer_grad_)
+
 
     elif grad_type == 'tUGC':
       hidden_dim = encoder_logits.shape[1]
