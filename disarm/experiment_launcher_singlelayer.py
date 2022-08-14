@@ -39,9 +39,9 @@ flags.DEFINE_enum('dataset', 'dynamic_mnist',
                   ['static_mnist', 'dynamic_mnist',
                    'fashion_mnist', 'omniglot'],
                   'Dataset to use.')
-flags.DEFINE_float('genmo_lr', 1e-3, #changed from 1e-4
+flags.DEFINE_float('genmo_lr', 1e-3, 
                    'Learning rate for decoder, Generation network.')
-flags.DEFINE_float('infnet_lr', 1e-3, #changed from 1e-4
+flags.DEFINE_float('infnet_lr', 1e-3, 
                    'Learning rate for encoder, Inference network.')
 flags.DEFINE_float('prior_lr', 1e-2,
                    'Learning rate for prior variables.')
